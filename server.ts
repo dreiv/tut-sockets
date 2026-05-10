@@ -1,6 +1,6 @@
 import express from "express";
 import { createServer } from "http";
-import { WebSocketServer } from "ws";
+import { WebSocketServer, WebSocket } from "ws";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -11,26 +11,80 @@ const app = express();
 const server = createServer(app);
 const wss = new WebSocketServer({ server });
 
+interface ExtWebSocket extends WebSocket {
+  username?: string;
+}
+
 app.use(express.static(path.join(__dirname, "public")));
 
-wss.on("connection", (ws, req) => {
-  // 'req' allows you to check headers or cookies if needed
-  console.log(`Client connected from: ${req.socket.remoteAddress}`);
+const chatHistory: any[] = [];
 
-  ws.on("message", (msg) => {
-    // msg is a Buffer by default in 'ws'
-    const messageString = msg.toString();
-    console.log("Received:", messageString);
+const broadcast = (data: object) => {
+  const message = JSON.stringify(data);
+  wss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(message);
+    }
+  });
+};
 
-    ws.send(`Server received your message: ${messageString}`);
+wss.on("connection", (ws: ExtWebSocket) => {
+  console.log("New client connected via WebSocket");
+
+  ws.on("message", (rawMsg) => {
+    try {
+      const parsed = JSON.parse(rawMsg.toString());
+
+      switch (parsed.type) {
+        case "login":
+          ws.username = parsed.username;
+          ws.send(JSON.stringify({ type: "history", data: chatHistory }));
+          broadcast({
+            type: "system",
+            content: `${ws.username} has joined the chat.`,
+          });
+
+          break;
+
+        case "chat": {
+          const newMessage = {
+            type: "chat",
+            username: ws.username || "Anonymous",
+            content: parsed.content,
+            time: new Date().toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
+          };
+
+          chatHistory.push(newMessage);
+
+          // Keep only the last 100 messages to prevent memory bloat
+          if (chatHistory.length > 100) {
+            chatHistory.shift();
+          }
+
+          broadcast(newMessage);
+          break;
+        }
+      }
+    } catch (err) {
+      console.error("Failed to parse incoming message:", err);
+    }
   });
 
   ws.on("close", () => {
+    if (ws.username) {
+      broadcast({
+        type: "system",
+        content: `${ws.username} has left the chat.`,
+      });
+    }
     console.log("Client disconnected");
   });
 });
 
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`🚀 Server is running on http://localhost:${PORT}`);
+  console.log(`🚀 Chat server running at http://localhost:${PORT}`);
 });

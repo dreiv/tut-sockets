@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Minimal Chat</title>
+    <style>
+      @layer base {
+        :root {
+          --bg: #fafaf9;
+          --text: #44403c;
+          --text-h: #1c1917;
+          --border: #eaddd7;
+          --code-bg: #f5f5f4;
+          --accent: #f47121;
+          --accent-bg: rgba(244, 113, 33, 0.05);
+          --accent-border: rgba(244, 113, 33, 0.25);
+          --shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.04);
+          --sans: "Inter", system-ui, sans-serif;
+          --mono: ui-monospace, "Cascadia Code", monospace;
+          color-scheme: light dark;
+          font-family: var(--sans);
+          font-size: 18px;
+          line-height: 1.6;
+          color: var(--text);
+          background-color: var(--bg);
+        }
+
+        @media (prefers-color-scheme: dark) {
+          :root {
+            --bg: #1c1917;
+            --text: #a8a29e;
+            --text-h: #fafaf9;
+            --border: #44403c;
+            --code-bg: #292524;
+            --accent: #fb923c;
+            --accent-bg: rgba(251, 146, 60, 0.1);
+          }
+        }
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        padding: 20px;
+      }
+
+      #app-container {
+        width: 100%;
+        max-width: 600px;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        box-shadow: var(--shadow);
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        height: 80vh;
+      }
+
+      h1 {
+        color: var(--text-h);
+        font-size: 1.5rem;
+        margin-bottom: 1rem;
+      }
+
+      input {
+        background: var(--code-bg);
+        border: 1px solid var(--border);
+        color: var(--text-h);
+        padding: 0.8rem;
+        border-radius: 6px;
+        font-family: var(--sans);
+        font-size: 1rem;
+        outline: none;
+      }
+
+      button {
+        background: var(--accent);
+        color: white;
+        border: none;
+        padding: 0.8rem 1.5rem;
+        border-radius: 6px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      #login-view {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        height: 100%;
+        padding: 2rem;
+      }
+
+      #chat-view {
+        display: none;
+        flex-direction: column;
+        height: 100%;
+      }
+
+      #messages {
+        flex: 1;
+        overflow-y: auto;
+        padding: 1.5rem;
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+      }
+
+      .msg {
+        max-width: 80%;
+        padding: 0.6rem 1rem;
+        border-radius: 12px;
+        font-size: 0.95rem;
+        word-wrap: break-word;
+        position: relative;
+      }
+
+      .msg.user {
+        align-self: flex-start;
+        background: var(--code-bg);
+        border: 1px solid var(--border);
+        border-bottom-left-radius: 2px;
+      }
+
+      .msg.me {
+        align-self: flex-end;
+        background: var(--accent-bg);
+        border: 1px solid var(--accent-border);
+        border-bottom-right-radius: 2px;
+      }
+
+      .msg.system {
+        align-self: center;
+        font-size: 0.75rem;
+        font-family: var(--mono);
+        opacity: 0.6;
+        background: none;
+        border: none;
+      }
+
+      .username {
+        font-weight: bold;
+        color: var(--accent);
+        display: block;
+        font-size: 0.75rem;
+        margin-bottom: 2px;
+      }
+
+      .timestamp {
+        font-size: 0.65rem;
+        opacity: 0.5;
+        margin-left: 6px;
+      }
+
+      #input-area {
+        padding: 1.5rem;
+        border-top: 1px solid var(--border);
+        display: flex;
+        gap: 10px;
+      }
+
+      #input-area input {
+        flex: 1;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app-container">
+      <div id="login-view">
+        <h1>Enter the Chat</h1>
+        <div style="display: flex; gap: 10px; width: 100%">
+          <input
+            type="text"
+            id="username-input"
+            placeholder="Your name..."
+            style="flex: 1"
+          />
+          <button id="join-btn">Join</button>
+        </div>
+      </div>
+
+      <div id="chat-view">
+        <div id="messages"></div>
+        <div id="input-area">
+          <input type="text" id="msg-input" placeholder="Message..." />
+          <button id="send-btn">Send</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      let socket;
+      let myName = "";
+
+      const loginView = document.getElementById("login-view");
+      const chatView = document.getElementById("chat-view");
+      const messagesDiv = document.getElementById("messages");
+      const usernameInput = document.getElementById("username-input");
+      const msgInput = document.getElementById("msg-input");
+
+      function connect() {
+        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        socket = new WebSocket(`${protocol}//${window.location.host}`);
+
+        socket.onmessage = (event) => {
+          const parsed = JSON.parse(event.data);
+
+          // Handle Chat History sent by server on login
+          if (parsed.type === "history") {
+            parsed.data.forEach((msg) => appendMessage(msg));
+          } else {
+            appendMessage(parsed);
+          }
+        };
+
+        socket.onopen = () => {
+          socket.send(JSON.stringify({ type: "login", username: myName }));
+        };
+      }
+
+      function appendMessage(data) {
+        const msgEl = document.createElement("div");
+
+        if (data.type === "system") {
+          msgEl.className = "msg system";
+          msgEl.textContent = data.content;
+        } else {
+          const isMe = data.username === myName;
+          msgEl.className = `msg ${isMe ? "me" : "user"}`;
+
+          msgEl.innerHTML = `
+        <span class="username">${isMe ? "You" : data.username} <span class="timestamp">${data.time}</span></span>
+        <div>${data.content}</div>
+      `;
+        }
+
+        messagesDiv.appendChild(msgEl);
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+      }
+
+      function handleJoin() {
+        const name = usernameInput.value.trim();
+        if (name) {
+          myName = name;
+          loginView.style.display = "none";
+          chatView.style.display = "flex";
+          connect();
+        }
+      }
+
+      function handleSend() {
+        const content = msgInput.value.trim();
+        if (content && socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: "chat", content: content }));
+          msgInput.value = "";
+        }
+      }
+
+      document.getElementById("join-btn").onclick = handleJoin;
+      document.getElementById("send-btn").onclick = handleSend;
+      usernameInput.onkeydown = (e) => {
+        if (e.key === "Enter") handleJoin();
+      };
+      msgInput.onkeydown = (e) => {
+        if (e.key === "Enter") handleSend();
+      };
+    </script>
+  </body>
+</html>
