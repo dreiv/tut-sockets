@@ -18,6 +18,7 @@ interface ExtWebSocket extends WebSocket {
 app.use(express.static(path.join(__dirname, "public")));
 
 const chatHistory: any[] = [];
+const typingUsers = new Set<string>();
 
 const broadcast = (data: object) => {
   const message = JSON.stringify(data);
@@ -36,7 +37,7 @@ wss.on("connection", (ws: ExtWebSocket) => {
       const parsed = JSON.parse(rawMsg.toString());
 
       switch (parsed.type) {
-        case "login":
+        case "login": {
           ws.username = parsed.username;
           ws.send(JSON.stringify({ type: "history", data: chatHistory }));
           broadcast({
@@ -45,6 +46,7 @@ wss.on("connection", (ws: ExtWebSocket) => {
           });
 
           break;
+        }
 
         case "chat": {
           const newMessage = {
@@ -67,6 +69,22 @@ wss.on("connection", (ws: ExtWebSocket) => {
           broadcast(newMessage);
           break;
         }
+
+        case "typing": {
+          if (ws.username) {
+            if (parsed.isTyping) {
+              typingUsers.add(ws.username);
+            } else {
+              typingUsers.delete(ws.username);
+            }
+
+            broadcast({
+              type: "typing_update",
+              users: Array.from(typingUsers),
+            });
+          }
+          break;
+        }
       }
     } catch (err) {
       console.error("Failed to parse incoming message:", err);
@@ -75,6 +93,8 @@ wss.on("connection", (ws: ExtWebSocket) => {
 
   ws.on("close", () => {
     if (ws.username) {
+      typingUsers.delete(ws.username);
+      broadcast({ type: "typing_update", users: Array.from(typingUsers) });
       broadcast({
         type: "system",
         content: `${ws.username} has left the chat.`,

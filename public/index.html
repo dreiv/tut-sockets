@@ -163,8 +163,18 @@
         margin-left: 6px;
       }
 
+      #typing-indicator {
+        padding: 0 1.5rem;
+        height: 24px;
+        font-size: 0.8rem;
+        color: var(--accent);
+        font-style: italic;
+        display: flex;
+        align-items: center;
+      }
+
       #input-area {
-        padding: 1.5rem;
+        padding: 0.5rem 1.5rem 1.5rem 1.5rem;
         border-top: 1px solid var(--border);
         display: flex;
         gap: 10px;
@@ -192,6 +202,7 @@
 
       <div id="chat-view">
         <div id="messages"></div>
+        <div id="typing-indicator"></div>
         <div id="input-area">
           <input type="text" id="msg-input" placeholder="Message..." />
           <button id="send-btn">Send</button>
@@ -202,10 +213,13 @@
     <script>
       let socket;
       let myName = "";
+      let typingTimeout;
+      let isTyping = false;
 
       const loginView = document.getElementById("login-view");
       const chatView = document.getElementById("chat-view");
       const messagesDiv = document.getElementById("messages");
+      const typingDiv = document.getElementById("typing-indicator");
       const usernameInput = document.getElementById("username-input");
       const msgInput = document.getElementById("msg-input");
 
@@ -216,9 +230,10 @@
         socket.onmessage = (event) => {
           const parsed = JSON.parse(event.data);
 
-          // Handle Chat History sent by server on login
           if (parsed.type === "history") {
             parsed.data.forEach((msg) => appendMessage(msg));
+          } else if (parsed.type === "typing_update") {
+            updateTypingUI(parsed.users);
           } else {
             appendMessage(parsed);
           }
@@ -228,6 +243,39 @@
           socket.send(JSON.stringify({ type: "login", username: myName }));
         };
       }
+
+      function updateTypingUI(users) {
+        const others = users.filter((u) => u !== myName);
+
+        if (others.length === 0) {
+          typingDiv.textContent = "";
+        } else if (others.length === 1) {
+          typingDiv.textContent = `${others[0]} is typing...`;
+        } else if (others.length <= 3) {
+          typingDiv.textContent = `${others.join(", ")} are typing...`;
+        } else {
+          typingDiv.textContent = "Several people are typing...";
+        }
+      }
+
+      function sendTypingStatus(status) {
+        if (socket && socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: "typing", isTyping: status }));
+        }
+      }
+
+      msgInput.oninput = () => {
+        if (!isTyping) {
+          isTyping = true;
+          sendTypingStatus(true);
+        }
+
+        clearTimeout(typingTimeout);
+        typingTimeout = setTimeout(() => {
+          isTyping = false;
+          sendTypingStatus(false);
+        }, 3000); // Stop showing typing after 3 seconds of inactivity
+      };
 
       function appendMessage(data) {
         const msgEl = document.createElement("div");
@@ -240,9 +288,9 @@
           msgEl.className = `msg ${isMe ? "me" : "user"}`;
 
           msgEl.innerHTML = `
-        <span class="username">${isMe ? "You" : data.username} <span class="timestamp">${data.time}</span></span>
-        <div>${data.content}</div>
-      `;
+            <span class="username">${isMe ? "You" : data.username} <span class="timestamp">${data.time}</span></span>
+            <div>${data.content}</div>
+          `;
         }
 
         messagesDiv.appendChild(msgEl);
@@ -256,6 +304,7 @@
           loginView.style.display = "none";
           chatView.style.display = "flex";
           connect();
+          msgInput.focus(); // Focus after joining
         }
       }
 
@@ -264,17 +313,27 @@
         if (content && socket.readyState === WebSocket.OPEN) {
           socket.send(JSON.stringify({ type: "chat", content: content }));
           msgInput.value = "";
+
+          isTyping = false;
+          clearTimeout(typingTimeout);
+          sendTypingStatus(false);
+
+          msgInput.focus(); // Keep focus after sending
         }
       }
 
       document.getElementById("join-btn").onclick = handleJoin;
       document.getElementById("send-btn").onclick = handleSend;
+
       usernameInput.onkeydown = (e) => {
         if (e.key === "Enter") handleJoin();
       };
+
       msgInput.onkeydown = (e) => {
         if (e.key === "Enter") handleSend();
       };
+
+      usernameInput.focus();
     </script>
   </body>
 </html>
